@@ -1,0 +1,60 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  /* theme-aware tokens used instead of bg-white / text-indigo-600 */
+  --color-surface: #ffffff;
+  --color-accent: #4f46e5;
+}
+
+/*
+ * Dark mode: instead of sprinkling dark: classes everywhere, the slate scale is flipped
+ * (50 = darkest ... 900 = lightest) so every existing bg-slate-*, text-slate-*, border-slate-*
+ * class adapts automatically. Toggled by the "dark" class on <html> (see ThemeToggle).
+ */
+.dark {
+  color-scheme: dark;
+  --color-surface: #111a2e;
+  --color-accent: #818cf8;
+  --color-slate-50: #0b1220;
+  --color-slate-100: #1a2438;
+  --color-slate-200: #26324a;
+  --color-slate-300: #384661;
+  --color-slate-400: #7b88a1;
+  --color-slate-500: #9aa6bd;
+  --color-slate-600: #b4bfd3;
+  --color-slate-700: #cbd5e5;
+  --color-slate-800: #dbe3ef;
+  --color-slate-900: #eef2f8;
+  --color-indigo-50: #1c2250;
+  --color-indigo-100: #272f63;
+  --color-red-50: #3a1620;
+  --color-red-100: #4a1d28;
+  --color-red-200: #6b2a39;
+  --color-red-600: #f87171;
+  --color-red-700: #fca5a5;
+  --color-red-900: #fecaca;
+  --color-amber-100: #3d2f10;
+  --color-amber-800: #fcd34d;
+  --color-emerald-600: #34d399;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+}
+
+/* slim scrollbars for the message and conversation lists */
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-300;
+}
