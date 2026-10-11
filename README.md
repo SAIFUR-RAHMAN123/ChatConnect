@@ -1,30 +1,48 @@
 # ChatConnect
 
-A real-time one-to-one chat application built with the MERN stack and Socket.IO. Users register, find each other, and chat instantly with presence, typing indicators, delivery/read receipts, and unread counts.
+A real-time chat application built with the MERN stack and Socket.IO: one-to-one and group chats, file sharing, reactions, dark mode, and password reset by email.
+
+**Live demo:** https://chatconnect-rust.vercel.app
+(The backend runs on Render's free plan and sleeps when idle, so the first request can take about 50 seconds.)
 
 ## Features
 
+**Core**
 - Register / login with JWT authentication (bcrypt-hashed passwords)
-- Search registered users by name or email and start one-to-one conversations (no duplicates, no self-chat)
-- Real-time messaging over Socket.IO with messages persisted in MongoDB
-- Message history with cursor-based pagination ("Load earlier messages")
-- Online/offline presence and "last seen"
-- Typing indicator ("Alice is typing...")
-- Message status: sent ✓ → delivered ✓✓ → read ✓✓ (blue)
-- Unread counts per conversation; conversations sorted by latest activity
-- Responsive UI: desktop split view, tablet, and mobile chat-app navigation with a back button
-- Loading, empty, and error states; automatic reconnect with resync
-- Centralized backend error handling; authorization enforced on the server for every REST route and socket event
+- Search users by name or email; one-to-one chats with no duplicates and no self-chat
+- Real-time messaging over Socket.IO, persisted in MongoDB
+- Cursor-based pagination ("Load earlier messages")
+- Online/offline presence and last seen
+- Typing indicator (works in groups: "Carol is typing...")
+- Message status: sent → delivered → read (in groups, read once everyone has read)
+- Unread counts; conversations sorted by latest activity
+- Responsive UI (desktop, tablet, mobile) with loading, empty and error states and auto-reconnect
+
+**Added later**
+- Edit and delete messages (delete for everyone, "(edited)" label)
+- Group chats: create, rename, add/remove members, leave
+- Image and file sharing (max 5 MB, type allowlist, content check, participants-only download)
+- Emoji picker and message reactions
+- Dark mode (remembered, no flash on load)
+- Forgot / reset password by email (link valid 15 minutes, single use, old sessions logged out after reset)
+
+**Security**
+- Authorization enforced on the server for every REST route and socket event
+- Rate limiting on login, register and reset routes
+- Reset tokens stored hashed (SHA-256); generic response so emails cannot be enumerated
+- Uploaded files are never public; they are served only to conversation participants
 
 ## Tech Stack
 
 | Layer | Tech |
 |---|---|
-| Frontend | React, Vite, Tailwind CSS v4, React Router, Axios, Socket.IO Client, Context API (auth only) |
-| Backend | Node.js, Express, Mongoose, Socket.IO, jsonwebtoken, bcryptjs, dotenv, cors |
-| Database | MongoDB (Atlas compatible) |
+| Frontend | React 19, Vite, Tailwind CSS v4, React Router, Axios, Socket.IO Client |
+| Backend | Node.js, Express 5, Mongoose, Socket.IO, jsonwebtoken, bcryptjs, multer |
+| Email | Gmail API over HTTPS (OAuth2 refresh token) |
+| Database | MongoDB Atlas |
+| Hosting | Vercel (client), Render (server) |
 
-## Architecture Overview
+## Architecture
 
 ```text
 React (Vite) ──REST (Axios, Bearer JWT)──► Express ──► Mongoose ──► MongoDB
@@ -32,11 +50,10 @@ React (Vite) ──REST (Axios, Bearer JWT)──► Express ──► Mongoose 
       └────── Socket.IO (JWT in handshake) ───┘
 ```
 
-- **REST** handles auth, user search, conversations, and message history. `POST /api/messages` and `PATCH /api/messages/:id/read` are also available over REST and emit the same real-time events.
-- **Socket.IO** handles live delivery. Each authenticated socket joins a private room `user:<id>`, so multiple tabs of one user stay in sync and events are only sent to participants.
-- Message sending/reading logic lives in one shared module (`server/utils/chatService.js`) used by both REST and sockets, so authorization and validation cannot diverge.
-- A conversation is unique per user pair (`pairKey` unique index), which prevents duplicates even under race conditions.
-- Presence is derived from live socket rooms and written serially per user, so fast reconnects cannot leave a stale status.
+- REST handles auth, users, conversations, uploads and history. Socket.IO handles live delivery.
+- Each socket joins a private room `user:<id>`, so multiple tabs stay in sync and events reach participants only.
+- Send / edit / delete / react / read logic lives in `server/utils/chatService.js`, shared by REST and sockets, so validation and authorization cannot diverge.
+- Presence is derived from live socket rooms and written serially per user.
 
 ## Folder Structure
 
@@ -44,15 +61,15 @@ React (Vite) ──REST (Axios, Bearer JWT)──► Express ──► Mongoose 
 chatconnect/
 ├── client/
 │   ├── src/
-│   │   ├── components/   Sidebar, UserSearch, ConversationList, ChatHeader, ChatWindow,
-│   │   │                 MessageList, MessageBubble, MessageInput, TypingIndicator, Avatar, AuthLayout
-│   │   ├── pages/        Login, Register, Chat
+│   │   ├── components/   Sidebar, ConversationList, ChatWindow, ChatHeader, MessageList,
+│   │   │                 MessageBubble, MessageInput, Attachment, EmojiPicker, Lightbox,
+│   │   │                 NewGroupModal, GroupInfoModal, ThemeToggle, ...
+│   │   ├── pages/        Login, Register, ForgotPassword, ResetPassword, Chat
 │   │   ├── context/      AuthContext.jsx
-│   │   ├── services/     api.js, socket.js
+│   │   ├── services/     api.js, socket.js, files.js
+│   │   ├── hooks/        useUserSearch.js
 │   │   ├── routes/       ProtectedRoute.jsx
-│   │   ├── utils/        format.js
-│   │   ├── App.jsx
-│   │   └── main.jsx
+│   │   └── utils/        format.js, emoji.js
 │   ├── .env.example
 │   └── vercel.json
 ├── server/
@@ -60,10 +77,10 @@ chatconnect/
 │   ├── models/           User, Conversation, Message
 │   ├── controllers/      auth, user, conversation, message
 │   ├── routes/
-│   ├── middleware/       authMiddleware, errorMiddleware
+│   ├── middleware/       authMiddleware, errorMiddleware, rateLimit
 │   ├── socket/           socketHandler.js
-│   ├── utils/            generateToken, httpError, chatService
-│   ├── test/e2e.js       REST + Socket.IO test suite
+│   ├── utils/            chatService, uploads, mailer, generateToken, httpError
+│   ├── test/e2e.js
 │   ├── server.js
 │   └── .env.example
 └── README.md
@@ -73,12 +90,20 @@ chatconnect/
 
 **server/.env** (copy from `server/.env.example`)
 
-```text
-PORT=5000
-MONGODB_URI=your_mongodb_atlas_connection_string
-JWT_SECRET=your_secret_key
-CLIENT_URL=http://localhost:5173
-```
+| Variable | Required | Description |
+|---|---|---|
+| `PORT` | no | Provided by the host in production (default 5000) |
+| `MONGODB_URI` | yes | MongoDB connection string |
+| `JWT_SECRET` | yes | Long random string |
+| `CLIENT_URL` | yes | Frontend URL, no trailing slash. Comma-separate several origins; the first is used in reset links |
+| `GMAIL_CLIENT_ID` | for email | Google OAuth client ID |
+| `GMAIL_CLIENT_SECRET` | for email | Google OAuth client secret |
+| `GMAIL_REFRESH_TOKEN` | for email | OAuth refresh token (scope `gmail.send`) |
+| `GMAIL_USER` | for email | The Gmail address that sends the emails |
+| `UPLOAD_DIR` | no | Upload folder (default `server/uploads`) |
+| `SHOW_RESET_LINK` | no | `true` shows the reset link on the page. Local testing only |
+
+If the `GMAIL_*` variables are empty, the reset link is printed in the server console instead of emailed (handy in development).
 
 **client/.env** (copy from `client/.env.example`)
 
@@ -87,16 +112,14 @@ VITE_API_URL=http://localhost:5000/api
 VITE_SOCKET_URL=http://localhost:5000
 ```
 
-`CLIENT_URL` may hold several comma-separated origins. Use a long random `JWT_SECRET` (for example `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`). Never commit `.env` files (they are git-ignored).
+Generate a secret: `node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`. Never commit `.env` files.
 
 ## Installation
 
 Requires Node.js 18+ and a MongoDB database (local or Atlas).
 
-Windows (cmd):
-
 ```bat
-cd chatconnect\server
+cd server
 npm install
 copy .env.example .env
 
@@ -105,73 +128,72 @@ npm install
 copy .env.example .env
 ```
 
-macOS/Linux: use `cp` instead of `copy`.
+Set `MONGODB_URI` and `JWT_SECRET` in `server\.env`. (macOS/Linux: use `cp` instead of `copy`.)
 
-Edit `server\.env` and set `MONGODB_URI` and `JWT_SECRET`.
-
-## Running
-
-Backend (terminal 1):
+## Running Locally
 
 ```bat
 cd server
 npm run dev
 ```
-
-Frontend (terminal 2):
-
 ```bat
 cd client
 npm run dev
 ```
 
-Open http://localhost:5173. To try it out, open two different browsers (or one normal and one private window), register two accounts, search for the other user, and chat.
+Open http://localhost:5173. Use two browsers (or a normal and a private window) with two accounts to chat.
 
 ## API Overview
 
-All routes except register/login require `Authorization: Bearer <token>`. Responses are `{ success, ... }`; errors are `{ success: false, message }`.
+All routes except register, login and the reset routes need `Authorization: Bearer <token>`. Responses are `{ success, ... }`; errors are `{ success: false, message }`.
 
 | Method | Route | Description |
 |---|---|---|
-| POST | `/api/auth/register` | Create account (name, email, password, confirmPassword) |
+| POST | `/api/auth/register` | Create account |
 | POST | `/api/auth/login` | Log in, returns `{ user, token }` |
 | GET | `/api/auth/me` | Current user |
-| GET | `/api/users` | Other users |
-| GET | `/api/users/search?q=` | Search by name/email |
-| GET | `/api/users/:id` | User profile |
-| GET | `/api/conversations` | My conversations (latest first, with last message and unread count) |
-| POST | `/api/conversations` | Start or reuse a conversation `{ participantId }` (201 new / 200 existing) |
-| GET | `/api/conversations/:id` | One conversation (participants only) |
-| GET | `/api/messages/:conversationId?limit=&before=<messageId>` | History in chronological order; `hasMore` flag |
+| POST | `/api/auth/forgot-password` | Email a reset link `{ email }` |
+| POST | `/api/auth/reset-password/:token` | Set a new password |
+| GET | `/api/users`, `/api/users/search?q=`, `/api/users/:id` | List, search, profile |
+| GET | `/api/conversations` | My conversations with last message and unread count |
+| POST | `/api/conversations` | Start or reuse a one-to-one chat `{ participantId }` |
+| POST | `/api/conversations/group` | Create a group |
+| GET | `/api/conversations/:id` | One conversation (members only) |
+| PATCH | `/api/conversations/:id` | Rename a group |
+| POST | `/api/conversations/:id/members` | Add members |
+| DELETE | `/api/conversations/:id/members/:userId` | Remove a member / leave |
+| GET | `/api/messages/:conversationId?limit=&before=<messageId>` | History, chronological, with `hasMore` |
 | POST | `/api/messages` | Send `{ conversationId, content }` |
-| PATCH | `/api/messages/:id/read` | Mark a received message as read |
+| POST | `/api/messages/upload` | Send a file (multipart: `file`, `conversationId`, `caption?`) |
+| GET | `/api/messages/:id/file` | Download an attachment (members only) |
+| PATCH | `/api/messages/:id` | Edit own message |
+| DELETE | `/api/messages/:id` | Delete own message for everyone |
+| PUT | `/api/messages/:id/reactions` | Toggle a reaction `{ emoji }` |
+| PATCH | `/api/messages/:id/read` | Mark a message as read |
 | GET | `/health` | Health check |
 
-Status codes: 200, 201, 400 (validation / invalid ID), 401 (missing/invalid/expired token, bad credentials), 403 (not a participant / not allowed), 404, 409 (duplicate email), 500.
+Status codes: 200, 201, 400, 401, 403, 404, 409, 429 (rate limit), 500.
 
 ## Socket.IO Events
 
-Connect with `io(SOCKET_URL, { auth: { token } })`. Invalid or expired tokens are rejected.
+Connect with `io(SOCKET_URL, { auth: { token } })`. Invalid, expired, or pre-password-reset tokens are rejected.
 
 | Direction | Event | Payload |
 |---|---|---|
-| client → server | `message:send` | `{ conversationId, content, tempId }` with ack `{ success, message, tempId }` |
-| server → client | `message:receive` | message object |
-| client → server | `message:read` | `{ conversationId }` with ack |
-| server → client | `message:read` | `{ conversationId, readerId, messageIds, readAt }` |
-| server → client | `message:delivered` | `{ conversationId, recipientId }` (recipient connected after receiving offline) |
+| client → server | `message:send` | `{ conversationId, content, tempId }`, ack `{ success, message, tempId }` |
+| client → server | `message:read` | `{ conversationId }`, ack |
 | client → server | `typing:start` / `typing:stop` | `{ conversationId }` |
+| server → client | `message:receive`, `message:edited`, `message:deleted`, `message:reaction` | updated message data |
+| server → client | `message:read`, `message:delivered` | receipt data |
 | server → client | `typing:start` / `typing:stop` | `{ conversationId, userId, name }` |
-| server → client | `user:online` | `{ userId }` |
-| server → client | `user:offline` | `{ userId, lastSeen }` |
-
-Status flow: a message is `sent` when stored, `delivered` immediately if the recipient has a connected socket (or when they next connect), and `read` when the recipient opens the conversation.
+| server → client | `user:online` / `user:offline` | `{ userId }` / `{ userId, lastSeen }` |
+| server → client | `conversation:updated`, `conversation:removed` | group created/renamed/members changed; you were removed from a group |
 
 ## Testing
 
-`server/test/e2e.js` boots the real app and runs 66 checks over REST and Socket.IO: auth, validation, duplicate email, authorization (outsiders get 403 on REST and sockets), search, duplicate-conversation prevention, persistence, pagination, presence, typing, delivery and read receipts, unread counts.
+`server/test/e2e.js` runs 145 checks over REST and Socket.IO (auth, authorization, groups, uploads, edit/delete, reactions, receipts, presence, password reset, pagination).
 
-It **drops the database when finished**, so it refuses to run unless the database name contains `test`. Point it at a throwaway database:
+It **drops the database at the end**, so it refuses to run unless the database name contains `test`:
 
 ```bat
 cd server
@@ -180,36 +202,38 @@ set JWT_SECRET=test_secret
 npm test
 ```
 
-(PowerShell: `$env:MONGODB_URI="..."; $env:JWT_SECRET="..."; npm test`.)
-
-## Screenshots
-
-_Add screenshots here (login, chat desktop, chat mobile)._
-
 ## Deployment
 
-**MongoDB Atlas**
-1. Create a cluster and a database user.
-2. Under Network Access, allow your backend host (or `0.0.0.0/0` for testing).
-3. Copy the connection string into `MONGODB_URI`.
+**1. MongoDB Atlas**: create a cluster and a database user, allow your backend host under Network Access (or `0.0.0.0/0`), and copy the connection string.
 
-**Backend (Render / Railway)**
-1. Create a Web Service from the `server` directory. Build: `npm install`. Start: `npm start`.
-2. Set `MONGODB_URI`, `JWT_SECRET`, and `CLIENT_URL` (your frontend URL, no trailing slash). `PORT` is provided by the platform.
-3. Socket.IO needs a long-running server, which both platforms provide.
+**2. Backend on Render**: Web Service from the `server` folder. Build `npm install`, start `npm start`. Set `MONGODB_URI`, `JWT_SECRET`, `CLIENT_URL` and the four `GMAIL_*` variables.
 
-**Frontend (Vercel)**
-1. Import the repo and set the root directory to `client` (framework preset: Vite).
-2. Set `VITE_API_URL` (`https://<backend-host>/api`) and `VITE_SOCKET_URL` (`https://<backend-host>`).
-3. `client/vercel.json` already rewrites all routes to `index.html` for React Router.
+**3. Frontend on Vercel**: root directory `client` (Vite preset). Set `VITE_API_URL=https://<backend-host>/api` and `VITE_SOCKET_URL=https://<backend-host>`. `client/vercel.json` rewrites all routes to `index.html`.
 
-After the frontend is deployed, update `CLIENT_URL` on the backend to match it.
+**4.** Set `CLIENT_URL` on the backend to the final Vercel URL.
+
+### Gmail API setup (password-reset emails)
+
+Render's free plan blocks outbound SMTP ports (25/465/587), so Gmail SMTP times out there. The app uses the Gmail API over HTTPS instead.
+
+1. Google Cloud Console: create a project and enable the **Gmail API**.
+2. OAuth consent screen: add scope `https://www.googleapis.com/auth/gmail.send` and set the app to **In production** (in "Testing" the refresh token expires after 7 days).
+3. Create an OAuth client (Web application) with redirect URI `https://developers.google.com/oauthplayground`.
+4. In the [OAuth Playground](https://developers.google.com/oauthplayground), use your own credentials, authorize the `gmail.send` scope, and exchange the code for a refresh token.
+5. Put the client ID, client secret, refresh token and your Gmail address into the four `GMAIL_*` variables on Render.
+
+Gmail's free limit is roughly 500 emails per day.
+
+## Known Limitations
+
+- Uploads are stored on the server disk. On Render's free plan they are deleted on redeploy or restart; use Cloudinary or S3 for permanent storage.
+- Members added to a group later can see older messages.
+- Free-tier cold start: the first request after idle takes about 50 seconds.
 
 ## Future Improvements
 
-- Group chats and file/image sharing
-- Message edit/delete and reactions
-- Refresh tokens / httpOnly cookie sessions and rate limiting on auth routes
+- Cloud storage for uploads (Cloudinary / S3)
+- Refresh tokens / httpOnly cookie sessions
 - Push notifications
 - Redis adapter for horizontal Socket.IO scaling
-- Profile avatars upload
+- Profile avatar upload
