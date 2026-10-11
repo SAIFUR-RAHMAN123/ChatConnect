@@ -1,36 +1,29 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-const resend = process.env.RESEND_API_KEY
-  ? new Resend(process.env.RESEND_API_KEY)
-  : null;
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
+  auth: {
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+  },
+});
 
 const sendMail = async ({ to, subject, text }) => {
-  // Local development: if Resend is not configured,
-  // print the email in the terminal.
-  if (!resend) {
-    console.log(
-      `\n--- EMAIL (Resend not configured) ---\n` +
-      `To: ${to}\n` +
-      `Subject: ${subject}\n\n` +
-      `${text}\n` +
-      `------------------------------------\n`
-    );
-    return;
-  }
+  try {
+    const info = await transporter.sendMail({
+      from: `"ChatConnect" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      text,
+    });
 
-  const { data, error } = await resend.emails.send({
-    from: process.env.MAIL_FROM || 'ChatConnect <onboarding@resend.dev>',
-    to: [to],
-    subject,
-    text,
-  });
-
-  if (error) {
-    console.error('Resend email error:', error.message);
+    console.log('Email sent successfully:', info.messageId);
+  } catch (error) {
+    console.error('Gmail SMTP error:', error.message);
     throw new Error('Failed to send email');
   }
-
-  console.log('Email sent successfully. ID:', data?.id);
 };
 
 const sendResetEmail = (user, link) =>
